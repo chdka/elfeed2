@@ -10,38 +10,22 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <memory>
 #include <mutex>
-#include <queue>
 #include <thread>
-
-struct FetchJob {
-    std::string url;
-    std::string etag;
-    std::string last_modified;
-};
 
 namespace {
 
-struct FetchQueue {
-    std::mutex m;
-    std::queue<FetchJob> jobs;
-};
-
-void worker_loop(Elfeed *app,
-                 std::shared_ptr<FetchQueue> q,
-                 std::shared_ptr<std::atomic<int>> live,
-                 std::string user_agent)
+void worker_loop(Elfeed *app, std::string user_agent)
 {
     for (;;) {
         if (!app->fetch_running.load()) break;
 
         FetchJob job;
         {
-            std::lock_guard lock(q->m);
-            if (q->jobs.empty()) break;
-            job = std::move(q->jobs.front());
-            q->jobs.pop();
+            std::lock_guard lock(app->fetch_queue_mutex);
+            if (app->fetch_queue.empty()) break;
+            job = std::move(app->fetch_queue.front());
+            app->fetch_queue.pop();
         }
 
         HttpRequest req;
@@ -71,7 +55,7 @@ void worker_loop(Elfeed *app,
 
     // Last worker out clears the "running" flag and wakes the UI one
     // more time so it can see the final state.
-    if (--(*live) == 0) {
+    if (--app->fetch_live == 0) {
         app->fetch_running = false;
         app_wake_ui(app);
     }
@@ -89,15 +73,23 @@ void fetch_all(Elfeed *app)
     if (!err.empty())
         elfeed_log(app, LOG_ERROR, "http_init: %s", err.c_str());
 
-    auto queue = std::make_shared<FetchQueue>();
-    for (auto &feed : app->feeds) {
-        FetchJob job;
-        job.url = feed.url;
-        job.etag = feed.etag;
-        job.last_modified = feed.last_modified;
-        queue->jobs.push(std::move(job));
+    int total;
+    {
+        std::lock_guard lock(app->fetch_queue_mutex);
+        // Should already be empty (workers drain to empty before
+        // exiting, the running flag prevents concurrent
+        // fetch_all), but a defensive clear keeps a stalled prior
+        // run from leaking jobs into a fresh batch.
+        std::queue<FetchJob>().swap(app->fetch_queue);
+        for (auto &feed : app->feeds) {
+            FetchJob job;
+            job.url = feed.url;
+            job.etag = feed.etag;
+            job.last_modified = feed.last_modified;
+            app->fetch_queue.push(std::move(job));
+        }
+        total = (int)app->fetch_queue.size();
     }
-    int total = (int)queue->jobs.size();
 
     elfeed_log(app, LOG_INFO, "Fetching %d feeds", total);
     for (auto &feed : app->feeds)
@@ -114,14 +106,12 @@ void fetch_all(Elfeed *app)
 
     int nworkers = std::min(app->max_connections, total);
     if (nworkers < 1) nworkers = 1;
-    auto live = std::make_shared<std::atomic<int>>(nworkers);
+    app->fetch_live = nworkers;
 
     std::string user_agent = elfeed_user_agent();
 
-    for (int i = 0; i < nworkers; i++) {
-        app->fetch_workers.emplace_back(
-            worker_loop, app, queue, live, user_agent);
-    }
+    for (int i = 0; i < nworkers; i++)
+        app->fetch_workers.emplace_back(worker_loop, app, user_agent);
 }
 
 void fetch_stop(Elfeed *app)

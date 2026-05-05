@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <queue>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -98,6 +99,15 @@ struct DownloadItem {
 
 // --- Fetch ---
 
+// One feed-fetch unit of work. Sits in app->fetch_queue from
+// fetch_all() until a worker pops it and turns it into a
+// FetchResult on the inbox.
+struct FetchJob {
+    std::string url;
+    std::string etag;
+    std::string last_modified;
+};
+
 struct FetchResult {
     std::string url;
     int status_code = 0;
@@ -183,6 +193,18 @@ struct Elfeed {
     std::atomic<int> fetches_total{0};
     std::vector<std::thread> fetch_workers;
     std::atomic<bool> fetch_running{false};
+    // Pending work and the live-worker counter, owned here rather
+    // than as per-call shared_ptrs because GCC 16's -Warray-bounds=
+    // produces false positives chasing make_shared's inlined
+    // _Sp_counted_ptr_inplace<...> control blocks. Owning these as
+    // members also matches the rest of the fetch state and skips
+    // a heap allocation per fetch_all run. fetch_queue is
+    // populated by fetch_all under fetch_queue_mutex, drained by
+    // workers under the same lock; fetch_live counts down to zero
+    // on the last worker exit.
+    std::mutex fetch_queue_mutex;
+    std::queue<FetchJob> fetch_queue;
+    std::atomic<int> fetch_live{0};
 
     // Epoch seconds when the last F5 / Fetch-All batch completed.
     // 0 means "never fetched". Persisted to ui_state so the "X
