@@ -247,6 +247,57 @@ void elfeed_shutdown(Elfeed *app)
 
 // ---- wxApp -------------------------------------------------------
 
+#ifdef __WXMAC__
+// macOS GUI launches (Spotlight, Launchpad, Finder, Dock) inherit
+// launchd's environment, not the user's shell. The Homebrew bin
+// directory is typically absent from that PATH, which means
+// subprocesses elfeed2 spawns can't find Homebrew tools by name
+// — yt-dlp can't locate `deno` and `ffmpeg`, the curl fallback
+// can't locate alternative builds, etc. Prepend the host-arch
+// Homebrew prefix (only one — single-Homebrew-per-machine is the
+// strongly-recommended setup; users with x86-64 Homebrew under
+// Rosetta on an Apple Silicon Mac, or vice versa, can prepend
+// the other path themselves via the upcoming `setenv` directive).
+// Idempotent — terminal launches that already inherited a
+// shell-set PATH stay untouched.
+//
+// Linux gets system tools on PATH from a GUI launch as long as
+// they live under /usr/bin or /usr/local/bin, which is the
+// distro-package and most-source-build default. Windows has no
+// equivalent default location — yt-dlp / ffmpeg installs there
+// manage PATH themselves (per-tool MSIs, scoop, choco). So this
+// only runs on macOS.
+static void augment_macos_path()
+{
+    static const char *kHomebrewBin =
+#if defined(__aarch64__) || defined(__arm64__)
+        "/opt/homebrew/bin";
+#else
+        "/usr/local/bin";
+#endif
+
+    auto contains_dir = [](const std::string &path,
+                           const std::string &dir) {
+        size_t start = 0;
+        while (start <= path.size()) {
+            size_t end = path.find(':', start);
+            if (end == std::string::npos) end = path.size();
+            if (path.substr(start, end - start) == dir) return true;
+            start = end + 1;
+        }
+        return false;
+    };
+
+    const char *current = std::getenv("PATH");
+    std::string path = current ? current : "";
+    if (contains_dir(path, kHomebrewBin)) return;
+    std::string augmented = path.empty()
+                                ? std::string(kHomebrewBin)
+                                : std::string(kHomebrewBin) + ":" + path;
+    setenv("PATH", augmented.c_str(), 1);
+}
+#endif
+
 bool ElfeedApp::OnInit()
 {
     // Set the global "current" narrow-string conversion to UTF-8.
@@ -258,6 +309,10 @@ bool ElfeedApp::OnInit()
     wxConvCurrent = &wxConvUTF8;
 
     SetAppName("elfeed2");
+
+#ifdef __WXMAC__
+    augment_macos_path();
+#endif
 
     // Command-line options. --db / --config let users (and the
     // mock-feed test rig) run against an isolated database +
