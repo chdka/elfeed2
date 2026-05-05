@@ -2,6 +2,7 @@
 #include "util.hpp"
 
 #include <wx/textfile.h>
+#include <wx/utils.h>
 
 #include <cctype>
 #include <cstdlib>
@@ -18,6 +19,9 @@
 //
 //   preset h @1-month +unread            # press 'h' in the list to
 //   preset v @1-month +youtube           # jump the filter to this
+//
+//   setenv PATH /opt/local/bin:$PATH     # exported to subprocesses;
+//   setenv REQUESTS_CA_BUNDLE …          # $NAME / ${NAME} expand
 //
 //   https://acoup.blog/feed/             # URL line opens a stanza
 //     title A Collection of Unmitigated Pedantry
@@ -101,6 +105,65 @@ std::string expand_tilde(const std::string &val)
     if (!val.empty() && val[0] == '~')
         return user_home_dir() + val.substr(1);
     return val;
+}
+
+// Expand `$NAME` and `${NAME}` against the current process
+// environment. Identifier characters are alnum + underscore;
+// anything else after `$` (or a `$` at end-of-string) is emitted
+// as a literal `$`. Undefined names expand to the empty string,
+// matching shell behavior. Used by `setenv VAL` so a user can
+// write `setenv PATH /opt/local/bin:$PATH` and get prepend
+// semantics without having to spell the inherited PATH out.
+//
+// Goes through wxGetEnv rather than std::getenv so the read is
+// Unicode-safe on Windows — native env vars there are UTF-16
+// and the narrow getenv would mangle non-ASCII values
+// (accented home dirs, Japanese filenames, etc.).
+std::string expand_env(const std::string &val)
+{
+    std::string out;
+    out.reserve(val.size());
+    for (size_t i = 0; i < val.size(); ) {
+        char c = val[i];
+        if (c != '$') { out += c; i++; continue; }
+        // $ at EOL — literal.
+        if (i + 1 >= val.size()) { out += c; i++; continue; }
+        size_t name_begin, name_end;
+        size_t after;
+        if (val[i + 1] == '{') {
+            // ${NAME} — read to closing brace.
+            name_begin = i + 2;
+            name_end = val.find('}', name_begin);
+            if (name_end == std::string::npos) {
+                // No closing brace; emit literal `$` and move on.
+                out += c;
+                i++;
+                continue;
+            }
+            after = name_end + 1;
+        } else if (std::isalnum((unsigned char)val[i + 1]) ||
+                   val[i + 1] == '_') {
+            // $NAME — read identifier.
+            name_begin = i + 1;
+            name_end = name_begin;
+            while (name_end < val.size() &&
+                   (std::isalnum((unsigned char)val[name_end]) ||
+                    val[name_end] == '_'))
+                name_end++;
+            after = name_end;
+        } else {
+            // `$` followed by something non-name — literal `$`.
+            out += c;
+            i++;
+            continue;
+        }
+        std::string name = val.substr(name_begin, name_end - name_begin);
+        wxString resolved;
+        if (wxGetEnv(wxString::FromUTF8(name), &resolved))
+            out += resolved.utf8_string();
+        i = after;
+    }
+    return out;
 }
 
 bool is_url(const std::string &s)
@@ -273,6 +336,36 @@ void config_load(Elfeed *app)
                 app->inline_images = false;
             else
                 warn("inline-images: expected yes/no", ln);
+            continue;
+        }
+        if (dir0 == "setenv") {
+            // `setenv NAME VALUE` — set a process-wide environment
+            // variable, applied at config-load time so subprocesses
+            // (yt-dlp, curl) inherit it. $-expansion in VALUE makes
+            // `setenv PATH /opt/local/bin:$PATH` natural — that
+            // line prepends /opt/local/bin to whatever PATH already
+            // is, including the macOS Homebrew default we set in
+            // OnInit. Multiple lines compose left-to-right (later
+            // lines see earlier ones' effects in the env).
+            //
+            // Removing a setenv line then reloading does NOT unset
+            // the variable — the previous value persists in the
+            // process environment. Restart Elfeed2 if you need that.
+            //
+            // wxSetEnv (rather than libc setenv / _putenv_s)
+            // because native Windows env vars are UTF-16; the
+            // narrow CRT setter would mangle non-ASCII values.
+            // wx routes through SetEnvironmentVariableW on
+            // Windows and setenv(3) on POSIX.
+            if (tokens.size() < 3) {
+                warn("setenv needs a name and a value", ln);
+                continue;
+            }
+            std::string name  = tokens[1];
+            std::string value = expand_env(value_after_tokens(line, 2));
+            if (!wxSetEnv(wxString::FromUTF8(name),
+                          wxString::FromUTF8(value)))
+                warn("setenv: could not set " + name, ln);
             continue;
         }
 

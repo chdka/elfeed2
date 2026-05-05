@@ -128,6 +128,25 @@ entry wins, so order them by priority.
 Foreground only (not background), applied on top of the default styling
 including bold for unread entries.
 
+### Environment
+
+A `setenv NAME VALUE` directive sets a process-wide environment
+variable at config-load time. Subprocesses (yt-dlp, ffmpeg, curl)
+inherit it. `$NAME` and `${NAME}` in `VALUE` expand against the
+current environment, so prepend / append idioms read naturally:
+
+    setenv PATH /opt/local/bin:$PATH
+    setenv REQUESTS_CA_BUNDLE /Users/me/extra-cas.pem
+    setenv HTTP_PROXY http://proxy.example.com:8080
+
+On macOS the Homebrew bin matching the host architecture
+(`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel)
+is prepended to `PATH` automatically at startup, so Spotlight-
+launched instances find tools the same way a Terminal launch does.
+Use `setenv` for additional locations or non-default Homebrew
+prefixes. Removing a `setenv` line and reloading does *not* unset
+the variable — restart Elfeed2 if you need that.
+
 ### Filter presets
 
 A `preset KEY FILTER` directive binds a single key to a filter string.
