@@ -150,6 +150,21 @@ std::string disambiguate_path(const std::string &dir,
                               const std::string &base,
                               const std::string &ext);
 
+// ---- URL handling ----
+
+// Convert an IRI (RFC 3987 — URL containing UTF-8 multibyte
+// characters, e.g. a Reddit /r/foo/comments/.../модифицированный)
+// into a RFC 3986 URI by percent-encoding every byte ≥ 0x80.
+// ASCII bytes (including the URL-reserved set: %, /, ?, #, &, etc.)
+// pass through unchanged, which keeps the URL structure intact and
+// makes the operation idempotent on already-encoded input.
+//
+// wxLaunchDefaultBrowser on macOS routes through NSURL / `open`,
+// which insist on ASCII-only URIs. Most browsers do the IRI-to-URI
+// dance themselves when you paste a URL, but the platform-launch
+// APIs we hand them are stricter.
+std::string iri_to_uri(const std::string &iri);
+
 // ---- Feed date parsing ----
 
 // Parse an ISO 8601 date/datetime. Fields without a timezone are

@@ -232,7 +232,7 @@ void FeedsPanel::on_context_menu(wxDataViewEvent &e)
         // happen again.
         const std::string &target =
             r.canonical_url.empty() ? r.url : r.canonical_url;
-        wxLaunchDefaultBrowser(wxString::FromUTF8(target));
+        wxLaunchDefaultBrowser(wxString::FromUTF8(iri_to_uri(target)));
     }
 }
 

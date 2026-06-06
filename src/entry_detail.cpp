@@ -68,7 +68,9 @@ EntryDetail::EntryDetail(wxWindow *parent, Elfeed *app)
     // Route every link click to the system default browser.
     body_->Bind(wxEVT_HTML_LINK_CLICKED,
                 [](wxHtmlLinkEvent &e) {
-                    wxLaunchDefaultBrowser(e.GetLinkInfo().GetHref());
+                    wxLaunchDefaultBrowser(wxString::FromUTF8(
+                        iri_to_uri(e.GetLinkInfo().GetHref()
+                                        .utf8_string())));
                 });
     // Re-render on system theme switch (light ↔ dark) so the
     // preview's <body> wrapper picks up the new system colors.
@@ -109,7 +111,8 @@ EntryDetail::EntryDetail(wxWindow *parent, Elfeed *app)
 void EntryDetail::on_link_click(wxMouseEvent &)
 {
     if (!link_url_.empty())
-        wxLaunchDefaultBrowser(wxString::FromUTF8(link_url_));
+        wxLaunchDefaultBrowser(
+            wxString::FromUTF8(iri_to_uri(link_url_)));
 }
 
 void EntryDetail::focus_body()

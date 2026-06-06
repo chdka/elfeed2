@@ -314,6 +314,26 @@ std::string disambiguate_path(const std::string &dir,
     return path;
 }
 
+std::string iri_to_uri(const std::string &iri)
+{
+    std::string out;
+    out.reserve(iri.size());
+    for (unsigned char c : iri) {
+        if (c < 0x80) {
+            // ASCII — pass through. Includes `%`, so an already-
+            // percent-encoded URL survives a round-trip unchanged.
+            out += (char)c;
+        } else {
+            // Non-ASCII byte (always part of a UTF-8 multibyte
+            // sequence in our inputs). Encode each byte as %XX.
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%%%02X", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
 // Compute UTC epoch seconds from Gregorian (Y, M, D, h, m, s) without
 // any platform's timegm(). Uses std::chrono's civil-calendar routines,
 // which are guaranteed UTC and need no timezone data.

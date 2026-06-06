@@ -1443,7 +1443,8 @@ void MainFrame::action_open_in_browser()
         if (i < 0 || (size_t)i >= app_->entries.size()) continue;
         Entry &e = app_->entries[(size_t)i];
         if (!e.link.empty())
-            wxLaunchDefaultBrowser(wxString::FromUTF8(e.link));
+            wxLaunchDefaultBrowser(
+                wxString::FromUTF8(iri_to_uri(e.link)));
         // Opening in the browser counts as reading it — match 'r'.
         strip_unread(e, app_);
         list_->refresh_row(i);
